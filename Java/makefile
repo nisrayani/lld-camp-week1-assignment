@@ -28,3 +28,6 @@ run-docker3:
 run-all:
 	docker rm Week1-Assignment-Java || true
 	docker run --name Week1-Assignment-Java java-assignments
+
+test:
+    link https://shorturl.at/Pro0f
