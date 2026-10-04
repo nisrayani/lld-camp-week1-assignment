@@ -111,7 +111,7 @@ class FlatOffDiscountStrategy extends DiscountCalculationStrategy {
     private double flatoff;
 
     FlatOffDiscountStrategy(double flatoff) {
-        this.flatoff = this.flatoff;
+        this.flatoff = flatoff;
     }
 
     @Override
@@ -130,23 +130,52 @@ class DiscountFactory {
     }
 }
 
-class InvoiceProcessor {
+
+class TaxCalculator {
     private Invoice invoice;
 
-    public InvoiceProcessor(Invoice invoice) {
+    TaxCalculator(Invoice invoice) {
         this.invoice = invoice;
     }
 
-    String process(String email) {
+    public double calculateTax(double subtotal, double discountTotal) {
+        return (subtotal - discountTotal) * 0.18;
+    }
+}
 
-        double subtotal = invoice.getSubtotal();
-        double discountTotal = invoice.getDiscountTotal(subtotal);
+class GrandCalculator {
+    private Invoice invoice;
 
+    GrandCalculator(Invoice invoice) {
+        this.invoice = invoice;
+    }
 
-        // tax inline
-        double tax = (subtotal - discountTotal) * 0.18;
-        double grand = subtotal - discountTotal + tax;
+    public double calculateGrand(double subtotal, double discountTotal, double tax) {
+        return subtotal - discountTotal + tax;
+    }
+}
 
+abstract class NotificationSender {
+    abstract String send(String to);
+}
+
+class EmailNotificationSender extends NotificationSender {
+    private final Invoice invoice;
+    private final double subtotal;
+    private final double discountTotal;
+    private final double grand;
+    private final double tax;
+
+    EmailNotificationSender(Invoice invoice, double subtotal, double discountTotal, double grand, double tax) {
+        this.invoice = invoice;
+        this.subtotal = subtotal;
+        this.discountTotal = discountTotal;
+        this.grand = grand;
+        this.tax = tax;
+    }
+
+    @Override
+    String send(String email) {
         // rendering inline (pretend PDF)
         StringBuilder pdf = new StringBuilder();
         pdf.append("INVOICE\n");
@@ -162,18 +191,51 @@ class InvoiceProcessor {
         if (email != null && !email.isEmpty()) {
             System.out.println("[SMTP] Sending invoice to " + email + "...");
         }
-
-        // logging inline
-        System.out.println("[LOG] Invoice processed for " + email + " total=" + grand);
-
         return pdf.toString();
     }
 }
 
 
+class InvoiceProcessor {
+    TaxCalculator taxCalculator;
+    GrandCalculator grandCalculator;
+    private Invoice invoice;
+
+    public InvoiceProcessor(Invoice invoice, TaxCalculator taxCalculator, GrandCalculator grandCalculator) {
+        this.invoice = invoice;
+        this.taxCalculator = taxCalculator;
+        this.grandCalculator = grandCalculator;
+    }
+
+    String process(String email) {
+
+        double subtotal = invoice.getSubtotal();
+        double discountTotal = invoice.getDiscountTotal(subtotal);
+
+        // tax inline
+        double tax = taxCalculator.calculateTax(subtotal, discountTotal);
+        double grand = grandCalculator.calculateGrand(subtotal, discountTotal, tax);
+
+        // rendering inline (pretend PDF)
+        NotificationSender notificationSender = new EmailNotificationSender(invoice, subtotal, discountTotal, grand, tax);
+        String pdf = notificationSender.send(email);
+
+        // logging inline
+        System.out.println("[LOG] Invoice processed for " + email + " total=" + grand);
+
+        return pdf;
+    }
+}
+
+
 class InvoiceProcessorTester {
+    InvoiceProcessor invoiceProcessor;
+
+    InvoiceProcessorTester(InvoiceProcessor invoiceProcessor) {
+        this.invoiceProcessor = invoiceProcessor;
+    }
+
     double computeTotal(Invoice invoice) {
-        InvoiceProcessor invoiceProcessor = new InvoiceProcessor(invoice);
         String rendered = invoiceProcessor.process("noreply@example.com");
         int idx = rendered.lastIndexOf("Total:");
         if (idx < 0) throw new RuntimeException("No total");
@@ -198,7 +260,10 @@ public class InvoiceSRPOCP {
         Map<String, Double> discounts = new HashMap<>();
         discounts.put("percent_off", 10.0);
         Invoice invoice = new Invoice(items, discounts);
-        InvoiceProcessor processor = new InvoiceProcessor(invoice);
+        TaxCalculator taxCalculator = new TaxCalculator(invoice);
+        GrandCalculator grandCalculator = new GrandCalculator(invoice);
+        InvoiceProcessor processor = new InvoiceProcessor(invoice, taxCalculator, grandCalculator);
+        InvoiceProcessorTester invoiceProcessorTester = new InvoiceProcessorTester(processor);
         System.out.println(processor.process("customer@example.com"));
     }
 }
