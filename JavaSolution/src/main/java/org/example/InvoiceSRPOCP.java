@@ -2,10 +2,21 @@ package org.example;
 // InvoiceSRPOCP.java
 // Messy starter: Monolith Invoice Service (violates SRP + OCP)
 
+import lombok.Getter;
+import lombok.Setter;
+
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+interface NotificationSender {
+    void send(String to);
+}
+
+interface InvoiceRenderer {
+    String render(InvoiceResult invoiceResult);
+}
 
 class LineItem {
     String sku;
@@ -42,7 +53,6 @@ class LineItem {
         this.unitPrice = unitPrice;
     }
 }
-
 
 class Invoice {
     List<LineItem> items;
@@ -130,68 +140,62 @@ class DiscountFactory {
     }
 }
 
-
 class TaxCalculator {
-    private Invoice invoice;
-
-    TaxCalculator(Invoice invoice) {
-        this.invoice = invoice;
-    }
-
     public double calculateTax(double subtotal, double discountTotal) {
         return (subtotal - discountTotal) * 0.18;
     }
 }
 
 class GrandCalculator {
-    private Invoice invoice;
-
-    GrandCalculator(Invoice invoice) {
-        this.invoice = invoice;
-    }
 
     public double calculateGrand(double subtotal, double discountTotal, double tax) {
         return subtotal - discountTotal + tax;
     }
 }
 
-abstract class NotificationSender {
-    abstract String send(String to);
-}
-
-class EmailNotificationSender extends NotificationSender {
+@Getter
+@Setter
+class InvoiceResult {
     private final Invoice invoice;
     private final double subtotal;
     private final double discountTotal;
     private final double grand;
     private final double tax;
 
-    EmailNotificationSender(Invoice invoice, double subtotal, double discountTotal, double grand, double tax) {
+    InvoiceResult(Invoice invoice, double subtotal, double discountTotal, double grand, double tax) {
         this.invoice = invoice;
         this.subtotal = subtotal;
         this.discountTotal = discountTotal;
         this.grand = grand;
         this.tax = tax;
     }
+}
+
+class TextInvoiceRenderer implements InvoiceRenderer {
 
     @Override
-    String send(String email) {
+    public String render(InvoiceResult invoiceResult) {
         // rendering inline (pretend PDF)
         StringBuilder pdf = new StringBuilder();
         pdf.append("INVOICE\n");
-        for (LineItem it : invoice.getItems()) {
+        for (LineItem it : invoiceResult.getInvoice().getItems()) {
             pdf.append(it.sku).append(" x").append(it.quantity).append(" @ ").append(it.unitPrice).append("\n");
         }
-        pdf.append("Subtotal: ").append(subtotal).append("\n")
-                .append("Discounts: ").append(discountTotal).append("\n")
-                .append("Tax: ").append(tax).append("\n")
-                .append("Total: ").append(grand).append("\n");
+        pdf.append("Subtotal: ").append(invoiceResult.getSubtotal()).append("\n")
+                .append("Discounts: ").append(invoiceResult.getDiscountTotal()).append("\n")
+                .append("Tax: ").append(invoiceResult.getTax()).append("\n")
+                .append("Total: ").append(invoiceResult.getGrand()).append("\n");
+        return pdf.toString();
+    }
+}
 
-        // email I/O inline (tight coupling)
+class EmailNotificationSender implements NotificationSender {
+
+    @Override
+    public void send(String email) {
         if (email != null && !email.isEmpty()) {
             System.out.println("[SMTP] Sending invoice to " + email + "...");
         }
-        return pdf.toString();
     }
 }
 
@@ -199,16 +203,19 @@ class EmailNotificationSender extends NotificationSender {
 class InvoiceProcessor {
     TaxCalculator taxCalculator;
     GrandCalculator grandCalculator;
+    NotificationSender notificationSender;
+    InvoiceRenderer invoiceRenderer;
     private Invoice invoice;
 
-    public InvoiceProcessor(Invoice invoice, TaxCalculator taxCalculator, GrandCalculator grandCalculator) {
+    public InvoiceProcessor(Invoice invoice, TaxCalculator taxCalculator, GrandCalculator grandCalculator, NotificationSender notificationSender, InvoiceRenderer invoiceRenderer) {
         this.invoice = invoice;
         this.taxCalculator = taxCalculator;
         this.grandCalculator = grandCalculator;
+        this.notificationSender = notificationSender;
+        this.invoiceRenderer = invoiceRenderer;
     }
 
-    String process(String email) {
-
+    public InvoiceResult calculateInvoiceResult() {
         double subtotal = invoice.getSubtotal();
         double discountTotal = invoice.getDiscountTotal(subtotal);
 
@@ -216,12 +223,19 @@ class InvoiceProcessor {
         double tax = taxCalculator.calculateTax(subtotal, discountTotal);
         double grand = grandCalculator.calculateGrand(subtotal, discountTotal, tax);
 
+        return new InvoiceResult(invoice, subtotal, discountTotal, tax, grand);
+    }
+
+    String process(String email) {
+
+        InvoiceResult invoiceResult = calculateInvoiceResult();
+
         // rendering inline (pretend PDF)
-        NotificationSender notificationSender = new EmailNotificationSender(invoice, subtotal, discountTotal, grand, tax);
-        String pdf = notificationSender.send(email);
+        String pdf = invoiceRenderer.render(invoiceResult);
+        notificationSender.send(email);
 
         // logging inline
-        System.out.println("[LOG] Invoice processed for " + email + " total=" + grand);
+        System.out.println("[LOG] Invoice processed for " + email + " total=" + invoiceResult.getGrand());
 
         return pdf;
     }
@@ -260,9 +274,9 @@ public class InvoiceSRPOCP {
         Map<String, Double> discounts = new HashMap<>();
         discounts.put("percent_off", 10.0);
         Invoice invoice = new Invoice(items, discounts);
-        TaxCalculator taxCalculator = new TaxCalculator(invoice);
-        GrandCalculator grandCalculator = new GrandCalculator(invoice);
-        InvoiceProcessor processor = new InvoiceProcessor(invoice, taxCalculator, grandCalculator);
+        TaxCalculator taxCalculator = new TaxCalculator();
+        GrandCalculator grandCalculator = new GrandCalculator();
+        InvoiceProcessor processor = new InvoiceProcessor(invoice, taxCalculator, grandCalculator, new EmailNotificationSender(), new TextInvoiceRenderer());
         InvoiceProcessorTester invoiceProcessorTester = new InvoiceProcessorTester(processor);
         System.out.println(processor.process("customer@example.com"));
     }
