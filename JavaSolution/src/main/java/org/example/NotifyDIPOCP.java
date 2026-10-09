@@ -1,3 +1,5 @@
+package org.example;
+
 class SmtpMailer {
     void send(String templ, String to, String body) {
         System.out.println("[SMTP] template=" + templ + " to=" + to + " body=" + body);
@@ -34,7 +36,7 @@ class SignUpService {
         // pretend DB save here…
 
         mailer.send("welcome", u.email, "Welcome!");
-        
+
         sms.sendOTP(u.phone, "123456");
         return true;
     }
